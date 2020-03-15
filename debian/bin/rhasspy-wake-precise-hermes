@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+if [[ -z "${rhasspywake_precise_hermes}" ]]; then
+    this_dir="$( cd "$( dirname "$0" )" && pwd )"
+    rhasspywake_precise_hermes="${this_dir}/../lib/rhasspywake_precise_hermes"
+fi
+
+"${rhasspywake_precise_hermes}/rhasspywake_precise_hermes" "$@"
