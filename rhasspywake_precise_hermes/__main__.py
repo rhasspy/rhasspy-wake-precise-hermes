@@ -1,13 +1,11 @@
 """Hermes MQTT service for Rhasspy wakeword with Mycroft Precise"""
 import argparse
-import json
 import logging
 import os
-import sys
+import shutil
 import typing
 from pathlib import Path
 
-import attr
 import paho.mqtt.client as mqtt
 
 from . import WakeHermesMqtt
@@ -103,8 +101,20 @@ def main():
             args.model = maybe_model
 
         if not args.engine:
-            # Use embedded engine
-            args.engine = _DIR / "precise-engine" / "precise-engine"
+            # Check for environment variable
+            if "PRECISE_ENGINE_DIR" in os.environ:
+                args.engine = Path(os.environ["PRECISE_ENGINE_DIR"]) / "precise-engine"
+            else:
+                # Look in PATH
+                maybe_engine = shutil.which("precise-engine")
+                if maybe_engine:
+                    # Use in PATH
+                    args.engine = Path(maybe_engine)
+                else:
+                    # Use embedded engine
+                    args.engine = _DIR / "precise-engine" / "precise-engine"
+
+        _LOGGER.debug("Using engine at %s", str(args.engine))
 
         # Listen for messages
         client = mqtt.Client()
