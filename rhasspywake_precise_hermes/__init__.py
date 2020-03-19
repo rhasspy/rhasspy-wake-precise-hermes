@@ -163,7 +163,8 @@ class WakeHermesMqtt:
                     currentSensitivity=self.sensitivity,
                     modelVersion="",
                     modelType="personal",
-                )
+                ),
+                wakewordId=self.wakeword_id,
             )
         except Exception as e:
             _LOGGER.exception("handle_detection")
