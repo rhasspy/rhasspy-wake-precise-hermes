@@ -1,5 +1,6 @@
 """Hermes MQTT service for Rhasspy wakeword with Mycroft Precise"""
 import argparse
+import asyncio
 import logging
 import os
 import shutil
@@ -12,6 +13,8 @@ from . import WakeHermesMqtt
 
 _DIR = Path(__file__).parent
 _LOGGER = logging.getLogger("rhasspywake_precise_hermes")
+
+# -----------------------------------------------------------------------------
 
 
 def main():
@@ -116,6 +119,8 @@ def main():
 
         _LOGGER.debug("Using engine at %s", str(args.engine))
 
+        loop = asyncio.get_event_loop()
+
         # Listen for messages
         client = mqtt.Client()
         hermes = WakeHermesMqtt(
@@ -129,27 +134,17 @@ def main():
             log_predictions=args.log_predictions,
             udp_audio_port=args.udp_audio_port,
             siteIds=args.siteId,
+            loop=loop,
         )
 
         hermes.load_engine()
 
-        def on_disconnect(client, userdata, flags, rc):
-            try:
-                # Automatically reconnect
-                _LOGGER.info("Disconnected. Trying to reconnect...")
-                client.reconnect()
-            except Exception:
-                logging.exception("on_disconnect")
-
-        # Connect
-        client.on_connect = hermes.on_connect
-        client.on_disconnect = on_disconnect
-        client.on_message = hermes.on_message
-
         _LOGGER.debug("Connecting to %s:%s", args.host, args.port)
         client.connect(args.host, args.port)
+        client.loop_start()
 
-        client.loop_forever()
+        # Run event loop
+        hermes.loop.run_forever()
     except KeyboardInterrupt:
         pass
     finally:
