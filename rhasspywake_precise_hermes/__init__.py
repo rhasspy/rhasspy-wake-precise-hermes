@@ -312,3 +312,5 @@ class WakeHermesMqtt(HermesClient):
                 await self.handle_audio_frame(message.wav_bytes, siteId=siteId)
         elif isinstance(message, GetHotwords):
             await self.publish_all(self.handle_get_hotwords(message))
+        else:
+            _LOGGER.warning("Unexpected message: %s", message)
