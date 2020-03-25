@@ -28,7 +28,7 @@ source "${venv}/bin/activate"
 # Install Python dependencies
 echo "Installing Python dependencies"
 pip3 ${PIP_INSTALL} --upgrade pip
-pip3 ${PIP_INSTALL} wheel setuptools
+pip3 ${PIP_INSTALL} --upgrade wheel setuptools
 
 # Install Mycroft Precise
 precise_file="${download}/precise-engine_0.3.0_${cpu_arch}.tar.gz"
