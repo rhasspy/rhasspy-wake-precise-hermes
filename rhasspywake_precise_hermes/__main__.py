@@ -43,8 +43,8 @@ def main():
     )
     parser.add_argument(
         "--wakewordId",
-        default="default",
-        help="Wakeword ID for model (default: default)",
+        default="",
+        help="Wakeword ID for model (default: use file name)",
     )
     parser.add_argument(
         "--log-predictions",

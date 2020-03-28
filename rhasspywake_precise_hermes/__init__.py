@@ -37,7 +37,7 @@ class WakeHermesMqtt(HermesClient):
         engine_path: Path,
         sensitivity: float = 0.5,
         trigger_level: int = 3,
-        wakeword_id: str = "default",
+        wakeword_id: str = "",
         model_dirs: typing.Optional[typing.List[Path]] = None,
         siteIds: typing.Optional[typing.List[str]] = None,
         enabled: bool = True,
@@ -177,6 +177,11 @@ class WakeHermesMqtt(HermesClient):
     ]:
         """Handle a successful hotword detection"""
         try:
+            wakewordId = self.wakewordId
+            if not wakewordId:
+                # Use file name
+                wakewordId = self.model_path.stem
+
             yield (
                 HotwordDetected(
                     siteId=self.last_audio_siteId,
@@ -185,7 +190,7 @@ class WakeHermesMqtt(HermesClient):
                     modelVersion="",
                     modelType="personal",
                 ),
-                {"wakewordId": self.wakeword_id},
+                {"wakewordId": wakewordId},
             )
         except Exception as e:
             _LOGGER.exception("handle_detection")
