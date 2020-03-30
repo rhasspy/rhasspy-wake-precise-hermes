@@ -113,13 +113,13 @@ def main():
         siteIds=args.siteId,
     )
 
+    hermes.load_engine()
+
+    _LOGGER.debug("Connecting to %s:%s", args.host, args.port)
+    hermes_cli.connect(client, args)
+    client.loop_start()
+
     try:
-        hermes.load_engine()
-
-        _LOGGER.debug("Connecting to %s:%s", args.host, args.port)
-        hermes_cli.connect(client, args)
-        client.loop_start()
-
         # Run event loop
         asyncio.run(hermes.handle_messages_async())
     except KeyboardInterrupt:
