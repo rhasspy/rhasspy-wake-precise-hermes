@@ -62,61 +62,58 @@ def main():
     _LOGGER.debug(args)
     hermes: typing.Optional[WakeHermesMqtt] = None
 
-    try:
-        if args.model_dir:
-            args.model_dir = [Path(d) for d in args.model_dir]
+    if args.model_dir:
+        args.model_dir = [Path(d) for d in args.model_dir]
 
-        # Use embedded models too
-        args.model_dir.append(_DIR / "models")
+    # Use embedded models too
+    args.model_dir.append(_DIR / "models")
 
-        if not args.model:
-            # Use default embedded model
-            args.model = _DIR / "models" / "hey-mycroft-2.pb"
+    if not args.model:
+        # Use default embedded model
+        args.model = _DIR / "models" / "hey-mycroft-2.pb"
+    else:
+        maybe_model = Path(args.model)
+        if not maybe_model.is_file():
+            # Resolve against model dirs
+            for model_dir in args.model_dir:
+                maybe_model = model_dir / args.model
+                if maybe_model.is_file():
+                    break
+
+        args.model = maybe_model
+
+    if not args.engine:
+        # Check for environment variable
+        if "PRECISE_ENGINE_DIR" in os.environ:
+            args.engine = Path(os.environ["PRECISE_ENGINE_DIR"]) / "precise-engine"
         else:
-            maybe_model = Path(args.model)
-            if not maybe_model.is_file():
-                # Resolve against model dirs
-                for model_dir in args.model_dir:
-                    maybe_model = model_dir / args.model
-                    if maybe_model.is_file():
-                        break
-
-            args.model = maybe_model
-
-        if not args.engine:
-            # Check for environment variable
-            if "PRECISE_ENGINE_DIR" in os.environ:
-                args.engine = Path(os.environ["PRECISE_ENGINE_DIR"]) / "precise-engine"
+            # Look in PATH
+            maybe_engine = shutil.which("precise-engine")
+            if maybe_engine:
+                # Use in PATH
+                args.engine = Path(maybe_engine)
             else:
-                # Look in PATH
-                maybe_engine = shutil.which("precise-engine")
-                if maybe_engine:
-                    # Use in PATH
-                    args.engine = Path(maybe_engine)
-                else:
-                    # Use embedded engine
-                    args.engine = _DIR / "precise-engine" / "precise-engine"
+                # Use embedded engine
+                args.engine = _DIR / "precise-engine" / "precise-engine"
 
-        _LOGGER.debug("Using engine at %s", str(args.engine))
+    _LOGGER.debug("Using engine at %s", str(args.engine))
 
-        loop = asyncio.get_event_loop()
+    # Listen for messages
+    client = mqtt.Client()
+    hermes = WakeHermesMqtt(
+        client,
+        args.model,
+        args.engine,
+        sensitivity=args.sensitivity,
+        trigger_level=args.trigger_level,
+        wakeword_id=args.wakewordId,
+        model_dirs=args.model_dir,
+        log_predictions=args.log_predictions,
+        udp_audio_port=args.udp_audio_port,
+        siteIds=args.siteId,
+    )
 
-        # Listen for messages
-        client = mqtt.Client()
-        hermes = WakeHermesMqtt(
-            client,
-            args.model,
-            args.engine,
-            sensitivity=args.sensitivity,
-            trigger_level=args.trigger_level,
-            wakeword_id=args.wakewordId,
-            model_dirs=args.model_dir,
-            log_predictions=args.log_predictions,
-            udp_audio_port=args.udp_audio_port,
-            siteIds=args.siteId,
-            loop=loop,
-        )
-
+    try:
         hermes.load_engine()
 
         _LOGGER.debug("Connecting to %s:%s", args.host, args.port)
@@ -124,11 +121,12 @@ def main():
         client.loop_start()
 
         # Run event loop
-        hermes.loop.run_forever()
+        asyncio.run(hermes.handle_messages_async())
     except KeyboardInterrupt:
         pass
     finally:
         _LOGGER.debug("Shutting down")
+        client.loop_stop()
         if hermes:
             hermes.stop_runner()
 

@@ -48,7 +48,6 @@ class WakeHermesMqtt(HermesClient):
         udp_audio_port: typing.Optional[int] = None,
         udp_chunk_size: int = 2048,
         log_predictions: bool = False,
-        loop=None,
     ):
         super().__init__(
             "rhasspywake_precise_hermes",
@@ -57,7 +56,6 @@ class WakeHermesMqtt(HermesClient):
             sample_width=sample_width,
             channels=channels,
             siteIds=siteIds,
-            loop=loop,
         )
 
         self.subscribe(AudioFrame, HotwordToggleOn, HotwordToggleOff, GetHotwords)
@@ -99,9 +97,6 @@ class WakeHermesMqtt(HermesClient):
         self.modelId = self.model_path.name
         self.log_predictions = log_predictions
 
-        # Event loop
-        self.loop = loop or asyncio.get_event_loop()
-
         # Start threads
         threading.Thread(target=self.detection_thread_proc, daemon=True).start()
 
@@ -122,8 +117,8 @@ class WakeHermesMqtt(HermesClient):
             self.engine_stream = ReadWriteStream()
 
         def on_activation():
-            asyncio.run_coroutine_threadsafe(
-                self.publish_all(self.handle_detection()), self.loop
+            asyncio.ensure_future(
+                self.publish_all(self.handle_detection()), loop=self.loop
             )
 
         if self.log_predictions:
@@ -177,7 +172,7 @@ class WakeHermesMqtt(HermesClient):
     ]:
         """Handle a successful hotword detection"""
         try:
-            wakewordId = self.wakewordId
+            wakewordId = self.wakeword_id
             if not wakewordId:
                 # Use file name
                 wakewordId = self.model_path.stem
