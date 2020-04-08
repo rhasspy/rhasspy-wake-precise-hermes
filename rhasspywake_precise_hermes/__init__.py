@@ -40,7 +40,7 @@ class WakeHermesMqtt(HermesClient):
         trigger_level: int = 3,
         wakeword_id: str = "",
         model_dirs: typing.Optional[typing.List[Path]] = None,
-        siteIds: typing.Optional[typing.List[str]] = None,
+        site_ids: typing.Optional[typing.List[str]] = None,
         enabled: bool = True,
         sample_rate: int = 16000,
         sample_width: int = 2,
@@ -56,7 +56,7 @@ class WakeHermesMqtt(HermesClient):
             sample_rate=sample_rate,
             sample_width=sample_width,
             channels=channels,
-            siteIds=siteIds,
+            site_ids=site_ids,
         )
 
         self.subscribe(AudioFrame, HotwordToggleOn, HotwordToggleOff, GetHotwords)
@@ -79,15 +79,15 @@ class WakeHermesMqtt(HermesClient):
 
         self.chunk_size = chunk_size
 
-        # Queue of WAV audio chunks to process (plus siteId)
+        # Queue of WAV audio chunks to process (plus site_id)
         self.wav_queue: queue.Queue = queue.Queue()
 
         # Listen for raw audio on UDP too
         self.udp_audio_port = udp_audio_port
         self.udp_chunk_size = udp_chunk_size
 
-        # siteId used for detections from UDP
-        self.udp_siteId = self.siteId
+        # site_id used for detections from UDP
+        self.udp_site_id = self.site_id
 
         self.first_audio: bool = True
         self.audio_buffer = bytes()
@@ -95,8 +95,8 @@ class WakeHermesMqtt(HermesClient):
         self.engine: typing.Optional[PreciseEngine] = None
         self.engine_stream: typing.Optional[ReadWriteStream] = None
         self.runner: typing.Optional[PreciseRunner] = None
-        self.last_audio_siteId: str = "default"
-        self.modelId = self.model_path.name
+        self.last_audio_site_id: str = "default"
+        self.model_id = self.model_path.name
         self.log_predictions = log_predictions
 
         # Start threads
@@ -162,10 +162,10 @@ class WakeHermesMqtt(HermesClient):
     # -------------------------------------------------------------------------
 
     async def handle_audio_frame(
-        self, wav_bytes: bytes, siteId: str = "default"
+        self, wav_bytes: bytes, site_id: str = "default"
     ) -> None:
         """Process a single audio frame"""
-        self.wav_queue.put((wav_bytes, siteId))
+        self.wav_queue.put((wav_bytes, site_id))
 
     async def handle_detection(
         self,
@@ -174,27 +174,27 @@ class WakeHermesMqtt(HermesClient):
     ]:
         """Handle a successful hotword detection"""
         try:
-            wakewordId = self.wakeword_id
-            if not wakewordId:
+            wakeword_id = self.wakeword_id
+            if not wakeword_id:
                 # Use file name
-                wakewordId = self.model_path.stem
+                wakeword_id = self.model_path.stem
 
             yield (
                 HotwordDetected(
-                    siteId=self.last_audio_siteId,
-                    modelId=self.modelId,
-                    currentSensitivity=self.sensitivity,
-                    modelVersion="",
-                    modelType="personal",
+                    site_id=self.last_audio_site_id,
+                    model_id=self.model_id,
+                    current_sensitivity=self.sensitivity,
+                    model_version="",
+                    model_type="personal",
                 ),
-                {"wakewordId": wakewordId},
+                {"wakeword_id": wakeword_id},
             )
         except Exception as e:
             _LOGGER.exception("handle_detection")
             yield HotwordError(
                 error=str(e),
                 context=str(self.model_path),
-                siteId=self.last_audio_siteId,
+                site_id=self.last_audio_site_id,
             )
 
     async def handle_get_hotwords(
@@ -223,30 +223,30 @@ class WakeHermesMqtt(HermesClient):
 
                 hotword_models.append(
                     Hotword(
-                        modelId=model_path.name,
+                        model_id=model_path.name,
                         modelWords=model_words,
-                        modelType="personal",
+                        model_type="personal",
                     )
                 )
 
             yield Hotwords(
-                models={m.modelId: m for m in hotword_models},
+                models={m.model_id: m for m in hotword_models},
                 id=get_hotwords.id,
-                siteId=get_hotwords.siteId,
+                site_id=get_hotwords.site_id,
             )
 
         except Exception as e:
             _LOGGER.exception("handle_get_hotwords")
             yield HotwordError(
-                error=str(e), context=str(get_hotwords), siteId=get_hotwords.siteId
+                error=str(e), context=str(get_hotwords), site_id=get_hotwords.site_id
             )
 
     def detection_thread_proc(self):
         """Handle WAV audio chunks."""
         try:
             while True:
-                wav_bytes, siteId = self.wav_queue.get()
-                self.last_audio_siteId = siteId
+                wav_bytes, site_id = self.wav_queue.get()
+                self.last_audio_site_id = site_id
 
                 # Handle audio frames
                 if self.first_audio:
@@ -288,7 +288,7 @@ class WakeHermesMqtt(HermesClient):
                 )
 
                 if self.enabled:
-                    self.wav_queue.put((wav_bytes, self.udp_siteId))
+                    self.wav_queue.put((wav_bytes, self.udp_site_id))
         except Exception:
             _LOGGER.exception("udp_thread_proc")
 
@@ -297,8 +297,8 @@ class WakeHermesMqtt(HermesClient):
     async def on_message(
         self,
         message: Message,
-        siteId: typing.Optional[str] = None,
-        sessionId: typing.Optional[str] = None,
+        site_id: typing.Optional[str] = None,
+        session_id: typing.Optional[str] = None,
         topic: typing.Optional[str] = None,
     ) -> GeneratorType:
         """Received message from MQTT broker."""
@@ -322,8 +322,8 @@ class WakeHermesMqtt(HermesClient):
             _LOGGER.debug("Disabled")
         elif isinstance(message, AudioFrame):
             if self.enabled:
-                assert siteId, "Missing siteId"
-                await self.handle_audio_frame(message.wav_bytes, siteId=siteId)
+                assert site_id, "Missing site_id"
+                await self.handle_audio_frame(message.wav_bytes, site_id=site_id)
         elif isinstance(message, GetHotwords):
             async for hotword_result in self.handle_get_hotwords(message):
                 yield hotword_result

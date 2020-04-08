@@ -42,7 +42,7 @@ def main():
         help="Activation threshold before prediction (default: 3)",
     )
     parser.add_argument(
-        "--wakewordId",
+        "--wakeword-id",
         default="",
         help="Wakeword ID for model (default: use file name)",
     )
@@ -106,11 +106,11 @@ def main():
         args.engine,
         sensitivity=args.sensitivity,
         trigger_level=args.trigger_level,
-        wakeword_id=args.wakewordId,
+        wakeword_id=args.wakeword_id,
         model_dirs=args.model_dir,
         log_predictions=args.log_predictions,
         udp_audio_port=args.udp_audio_port,
-        siteIds=args.siteId,
+        site_ids=args.site_id,
     )
 
     hermes.load_engine()
