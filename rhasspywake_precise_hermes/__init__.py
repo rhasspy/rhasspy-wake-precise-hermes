@@ -224,15 +224,13 @@ class WakeHermesMqtt(HermesClient):
                 hotword_models.append(
                     Hotword(
                         model_id=model_path.name,
-                        modelWords=model_words,
+                        model_words=model_words,
                         model_type="personal",
                     )
                 )
 
             yield Hotwords(
-                models={m.model_id: m for m in hotword_models},
-                id=get_hotwords.id,
-                site_id=get_hotwords.site_id,
+                models=hotword_models, id=get_hotwords.id, site_id=get_hotwords.site_id
             )
 
         except Exception as e:
