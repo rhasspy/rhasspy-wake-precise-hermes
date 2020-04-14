@@ -52,7 +52,10 @@ def main():
         help="Log prediction probabilities for each audio chunk (very verbose)",
     )
     parser.add_argument(
-        "--udp-audio-port", type=int, help="Also listen for WAV audio on UDP"
+        "--udp-audio",
+        nargs=3,
+        action="append",
+        help="Host/port/siteId for UDP audio input",
     )
 
     hermes_cli.add_hermes_args(parser)
@@ -98,6 +101,12 @@ def main():
 
     _LOGGER.debug("Using engine at %s", str(args.engine))
 
+    udp_audio = []
+    if args.udp_audio:
+        udp_audio = [
+            (host, int(port), site_id) for host, port, site_id in args.udp_audio
+        ]
+
     # Listen for messages
     client = mqtt.Client()
     hermes = WakeHermesMqtt(
@@ -109,7 +118,7 @@ def main():
         wakeword_id=args.wakeword_id,
         model_dirs=args.model_dir,
         log_predictions=args.log_predictions,
-        udp_audio_port=args.udp_audio_port,
+        udp_audio=udp_audio,
         site_ids=args.site_id,
     )
 
