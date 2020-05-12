@@ -3,11 +3,11 @@ import asyncio
 import logging
 import queue
 import socket
+import subprocess
 import threading
 import typing
 from pathlib import Path
 
-from precise_runner import PreciseEngine, PreciseRunner, ReadWriteStream
 from rhasspyhermes.audioserver import AudioFrame
 from rhasspyhermes.base import Message
 from rhasspyhermes.client import GeneratorType, HermesClient, TopicArgs
@@ -21,6 +21,8 @@ from rhasspyhermes.wake import (
     HotwordToggleOn,
     HotwordToggleReason,
 )
+
+from .precise import TriggerDetector
 
 WAV_HEADER_BYTES = 44
 _LOGGER = logging.getLogger("rhasspywake_precise_hermes")
@@ -85,9 +87,10 @@ class WakeHermesMqtt(HermesClient):
         self.first_audio: bool = True
         self.audio_buffer = bytes()
 
-        self.engine: typing.Optional[PreciseEngine] = None
-        self.engine_stream: typing.Optional[ReadWriteStream] = None
-        self.runner: typing.Optional[PreciseRunner] = None
+        self.engine_proc: typing.Optional[subprocess.Popen] = None
+        self.engine_thread: typing.Optional[threading.Thread] = None
+        self.detector: typing.Optional[TriggerDetector] = None
+
         self.last_audio_site_id: str = "default"
         self.model_id = self.model_path.name
         self.log_predictions = log_predictions
@@ -108,44 +111,44 @@ class WakeHermesMqtt(HermesClient):
 
     # -------------------------------------------------------------------------
 
+    def engine_thread_proc(self):
+        """Read predictions from precise-engine."""
+        assert (
+            self.engine_proc and self.engine_proc.stdout and self.detector
+        ), "Precise engine is not started"
+
+        for line in self.engine_proc.stdout:
+            line = line.decode().strip()
+            if line:
+                if self.log_predictions:
+                    _LOGGER.debug("Prediction: %s", line)
+
+                try:
+                    if self.detector.update(float(line)):
+                        asyncio.run_coroutine_threadsafe(
+                            self.publish_all(self.handle_detection()), self.loop
+                        )
+                except ValueError:
+                    _LOGGER.exception("engine_proc")
+
     def load_engine(self):
         """Load Precise engine and model."""
-        if self.engine is None:
-            _LOGGER.debug("Loading Precise engine at %s", self.engine_path)
-            self.engine = PreciseEngine(
-                self.engine_path, self.model_path, chunk_size=self.chunk_size
-            )
 
-            assert self.engine is not None
-            self.engine_stream = ReadWriteStream()
+        # Stop any previous engine
+        self.stop_runner()
 
-        def on_activation():
-            asyncio.run_coroutine_threadsafe(
-                self.publish_all(self.handle_detection()), self.loop
-            )
+        engine_cmd = [str(self.engine_path), str(self.model_path), str(self.chunk_size)]
 
-        if self.log_predictions:
+        _LOGGER.debug(engine_cmd)
+        self.engine_proc = subprocess.Popen(
+            engine_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
+        )
 
-            def on_prediction(prob: float):
-                _LOGGER.debug("Prediction: %s", prob)
-
-        else:
-
-            def on_prediction(prob: float):
-                pass
-
-        if self.runner is None:
-            self.runner = PreciseRunner(
-                self.engine,
-                stream=self.engine_stream,
-                sensitivity=self.sensitivity,
-                trigger_level=self.trigger_level,
-                on_activation=on_activation,
-                on_prediction=on_prediction,
-            )
-
-            assert self.runner is not None
-            self.runner.start()
+        self.detector = TriggerDetector(
+            self.chunk_size,
+            sensitivity=self.sensitivity,
+            trigger_level=self.trigger_level,
+        )
 
         _LOGGER.debug(
             "Loaded Mycroft Precise (model=%s, sensitivity=%s, trigger_level=%s)",
@@ -154,11 +157,24 @@ class WakeHermesMqtt(HermesClient):
             self.trigger_level,
         )
 
+        self.engine_thread = threading.Thread(
+            target=self.engine_thread_proc, daemon=True
+        )
+
+        self.engine_thread.start()
+
     def stop_runner(self):
         """Stop Precise runner."""
-        if self.runner:
-            self.runner.stop()
-            self.runner = None
+        if self.engine_proc:
+            self.engine_proc.terminate()
+            self.engine_proc.wait()
+            self.engine_proc = None
+
+        if self.engine_thread:
+            self.engine_thread.join()
+            self.engine_thread = None
+
+        self.detector = None
 
     # -------------------------------------------------------------------------
 
@@ -252,8 +268,12 @@ class WakeHermesMqtt(HermesClient):
                     _LOGGER.debug("Receiving audio")
                     self.first_audio = False
 
-                if not self.engine:
+                if not self.engine_proc:
                     self.load_engine()
+
+                assert (
+                    self.engine_proc and self.engine_proc.stdin
+                ), "Precise engine not loaded"
 
                 # Extract/convert audio data
                 audio_data = self.maybe_convert_wav(wav_bytes)
@@ -268,7 +288,8 @@ class WakeHermesMqtt(HermesClient):
                     self.audio_buffer = self.audio_buffer[self.chunk_size :]
 
                     if chunk:
-                        self.engine_stream.write(chunk)
+                        # Send to precise-engine
+                        self.engine_proc.stdin.write(chunk)
         except Exception:
             _LOGGER.exception("detection_thread_proc")
 

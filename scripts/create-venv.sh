@@ -19,10 +19,12 @@ download="${src_dir}/download"
 
 # -----------------------------------------------------------------------------
 
+: "${PYTHON=python3}"
+
 # Create virtual environment
 echo "Creating virtual environment at ${venv}"
 rm -rf "${venv}"
-python3 -m venv "${venv}"
+"${PYTHON}" -m venv "${venv}"
 source "${venv}/bin/activate"
 
 # Install Python dependencies
@@ -36,9 +38,9 @@ if [[ ! -s "${precise_file}" ]]; then
     wget -O "${precise_file}" "https://github.com/MycroftAI/mycroft-precise/releases/download/v0.3.0/precise-engine_0.3.0_${cpu_arch}.tar.gz"
 fi
 
+# Extract to virtual environment
 "${src_dir}/scripts/install-precise.sh" \
-    "${precise_file}" \
-    "${src_dir}/${python_name}"
+    "${precise_file}" "${venv}"
 
 # Install local Rhasspy dependencies if available
 grep '^rhasspy-' "${src_dir}/requirements.txt" | \
