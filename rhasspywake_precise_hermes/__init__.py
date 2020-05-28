@@ -88,7 +88,6 @@ class WakeHermesMqtt(HermesClient):
         self.audio_buffer = bytes()
 
         self.engine_proc: typing.Optional[subprocess.Popen] = None
-        self.engine_thread: typing.Optional[threading.Thread] = None
         self.detector: typing.Optional[TriggerDetector] = None
 
         self.last_audio_site_id: str = "default"
@@ -96,7 +95,10 @@ class WakeHermesMqtt(HermesClient):
         self.log_predictions = log_predictions
 
         # Start threads
-        threading.Thread(target=self.detection_thread_proc, daemon=True).start()
+        self.detection_thread = threading.Thread(
+            target=self.detection_thread_proc, daemon=True
+        )
+        self.detection_thread.start()
 
         # Listen for raw audio on UDP too
         self.udp_chunk_size = udp_chunk_size
@@ -131,11 +133,12 @@ class WakeHermesMqtt(HermesClient):
                 except ValueError:
                     _LOGGER.exception("engine_proc")
 
-    def load_engine(self):
-        """Load Precise engine and model."""
+    def load_engine(self, block=True):
+        """Load Precise engine and model.
 
-        # Stop any previous engine
-        self.stop_runner()
+        if block is True, wait until an empty chunk is predicted before
+        returning.
+        """
 
         engine_cmd = [str(self.engine_path), str(self.model_path), str(self.chunk_size)]
 
@@ -157,11 +160,13 @@ class WakeHermesMqtt(HermesClient):
             self.trigger_level,
         )
 
-        self.engine_thread = threading.Thread(
-            target=self.engine_thread_proc, daemon=True
-        )
-
-        self.engine_thread.start()
+        if block:
+            # Send empty chunk and wait for a prediction
+            _LOGGER.debug("Waiting for Precise to start...")
+            empty_chunk = b"\0" * self.chunk_size
+            self.engine_proc.stdin.write(empty_chunk)
+            self.engine_proc.stdin.flush()
+            self.engine_proc.stdout.readline()
 
     def stop_runner(self):
         """Stop Precise runner."""
@@ -170,9 +175,10 @@ class WakeHermesMqtt(HermesClient):
             self.engine_proc.wait()
             self.engine_proc = None
 
-        if self.engine_thread:
-            self.engine_thread.join()
-            self.engine_thread = None
+        if self.detection_thread:
+            self.wav_queue.put((None, None))
+            self.detection_thread.join()
+            self.detection_thread = None
 
         self.detector = None
 
@@ -261,6 +267,10 @@ class WakeHermesMqtt(HermesClient):
         try:
             while True:
                 wav_bytes, site_id = self.wav_queue.get()
+                if wav_bytes is None:
+                    # Shutdown signal
+                    break
+
                 self.last_audio_site_id = site_id
 
                 # Handle audio frames
@@ -289,7 +299,26 @@ class WakeHermesMqtt(HermesClient):
 
                     if chunk:
                         # Send to precise-engine
+                        # NOTE: The flush() is critical to this working.
                         self.engine_proc.stdin.write(chunk)
+                        self.engine_proc.stdin.flush()
+
+                        # Get prediction
+                        line = self.engine_proc.stdout.readline()
+                        line = line.decode().strip()
+
+                        if line:
+                            if self.log_predictions:
+                                _LOGGER.debug("Prediction: %s", line)
+
+                            try:
+                                if self.detector.update(float(line)):
+                                    asyncio.run_coroutine_threadsafe(
+                                        self.publish_all(self.handle_detection()),
+                                        self.loop,
+                                    )
+                            except ValueError:
+                                _LOGGER.exception("prediction")
         except Exception:
             _LOGGER.exception("detection_thread_proc")
 
