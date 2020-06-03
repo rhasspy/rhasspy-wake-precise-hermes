@@ -1,16 +1,16 @@
 """Setup file for rhasspywake_precise_hermes"""
-import os
+from pathlib import Path
 
 import setuptools
 
-this_dir = os.path.abspath(os.path.dirname(__file__))
-with open(os.path.join(this_dir, "README.md"), "r") as readme_file:
+this_dir = Path(__file__).parent
+with open(this_dir / "README.md") as readme_file:
     long_description = readme_file.read()
 
-with open(os.path.join(this_dir, "requirements.txt"), "r") as requirements_file:
+with open(this_dir / "requirements.txt") as requirements_file:
     requirements = requirements_file.read().splitlines()
 
-with open(os.path.join(this_dir, "VERSION"), "r") as version_file:
+with open(this_dir / "VERSION") as version_file:
     version = version_file.read().strip()
 
 module_dir = this_dir / "rhasspywake_precise_hermes"
