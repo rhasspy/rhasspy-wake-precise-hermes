@@ -13,6 +13,10 @@ with open(os.path.join(this_dir, "requirements.txt"), "r") as requirements_file:
 with open(os.path.join(this_dir, "VERSION"), "r") as version_file:
     version = version_file.read().strip()
 
+module_dir = this_dir / "rhasspywake_precise_hermes"
+model_dir = module_dir / "models"
+model_files = [str(f.relative_to(module_dir)) for f in model_dir.rglob("*")]
+
 setuptools.setup(
     name="rhasspy-wake-precise-hermes",
     version=version,
@@ -20,6 +24,7 @@ setuptools.setup(
     author_email="hansen.mike@gmail.com",
     url="https://github.com/rhasspy/rhasspy-wake-precise-hermes",
     packages=setuptools.find_packages(),
+    package_data={"rhasspywake_precise_hermes": model_files + ["py.typed"]},
     install_requires=requirements,
     entry_points={
         "console_scripts": [
