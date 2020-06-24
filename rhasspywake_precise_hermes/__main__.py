@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger("rhasspywake_precise_hermes")
 
 def main():
     """Main method."""
-    parser = argparse.ArgumentParser(prog="rhasspywake_precise_hermes")
+    parser = argparse.ArgumentParser(prog="rhasspy-wake-precise-hermes")
     parser.add_argument("--model", help="Precise model file to use (.pb)")
     parser.add_argument("--engine", help="Path to precise-engine executable")
     parser.add_argument(

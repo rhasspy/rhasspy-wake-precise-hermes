@@ -9,9 +9,6 @@ fi
 this_dir="$( cd "$( dirname "$0" )" && pwd )"
 src_dir="$(realpath "${this_dir}/..")"
 
-python_name="$(basename "${src_dir}" | sed -e 's/-//' | sed -e 's/-/_/g')"
-cpu_arch="$(uname -m)"
-
 # -----------------------------------------------------------------------------
 
 venv="${src_dir}/.venv"
@@ -31,16 +28,6 @@ source "${venv}/bin/activate"
 echo "Installing Python dependencies"
 pip3 ${PIP_INSTALL} --upgrade pip
 pip3 ${PIP_INSTALL} --upgrade wheel setuptools
-
-# Install Mycroft Precise
-precise_file="${download}/precise-engine_0.3.0_${cpu_arch}.tar.gz"
-if [[ ! -s "${precise_file}" ]]; then
-    wget -O "${precise_file}" "https://github.com/MycroftAI/mycroft-precise/releases/download/v0.3.0/precise-engine_0.3.0_${cpu_arch}.tar.gz"
-fi
-
-# Extract to virtual environment
-"${src_dir}/scripts/install-precise.sh" \
-    "${precise_file}" "${venv}"
 
 # Install local Rhasspy dependencies if available
 grep '^rhasspy-' "${src_dir}/requirements.txt" | \
