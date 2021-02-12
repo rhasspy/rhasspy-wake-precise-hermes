@@ -8,6 +8,7 @@ import typing
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
+
 import rhasspyhermes.cli as hermes_cli
 
 from . import WakeHermesMqtt
@@ -57,6 +58,7 @@ def main():
         action="append",
         help="Host/port/siteId for UDP audio input",
     )
+    parser.add_argument("--lang", help="Set lang in hotword detected message")
 
     hermes_cli.add_hermes_args(parser)
     args = parser.parse_args()
@@ -120,6 +122,7 @@ def main():
         log_predictions=args.log_predictions,
         udp_audio=udp_audio,
         site_ids=args.site_id,
+        lang=args.lang,
     )
 
     hermes.load_engine()
