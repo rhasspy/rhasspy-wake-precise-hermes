@@ -140,7 +140,8 @@ def main():
         _LOGGER.debug("Shutting down")
         client.loop_stop()
         if hermes:
-            hermes.stop_runner()
+            for site_id in args.site_id:
+                hermes.stop_runner(site_id)
 
 
 # -----------------------------------------------------------------------------

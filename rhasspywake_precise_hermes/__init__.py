@@ -80,28 +80,33 @@ class WakeHermesMqtt(HermesClient):
         self.sample_width = sample_width
         self.channels = channels
 
-        self.chunk_size = chunk_size
+        self.chunk_sizes = dict()
 
         # Queue of WAV audio chunks to process (plus site_id)
-        self.wav_queue: queue.Queue = queue.Queue()
+        self.wav_queues = dict()
 
-        self.first_audio: bool = True
-        self.audio_buffer = bytes()
+        self.first_audios = dict()
+        self.audio_buffers = dict()
+
+        self.engine_procs = dict()
+        self.detectors = dict()
+        self.detection_threads = dict()
 
         self.lang = lang
-
-        self.engine_proc: typing.Optional[subprocess.Popen] = None
-        self.detector: typing.Optional[TriggerDetector] = None
 
         self.last_audio_site_id: str = "default"
         self.model_id = self.model_path.name
         self.log_predictions = log_predictions
 
-        # Start threads
-        self.detection_thread = threading.Thread(
-            target=self.detection_thread_proc, daemon=True
-        )
-        self.detection_thread.start()
+        for site_id in self.site_ids:
+          self.audio_buffers[site_id] = bytes()
+          self.first_audios[site_id] = True
+          self.wav_queues[site_id] = queue.Queue()
+          self.engine_procs[site_id] = None
+          self.chunk_sizes[site_id] = chunk_size
+          self.detectors[site_id] = None
+          # Start threads
+          self.detection_threads[site_id] = threading.Thread(target=self.detection_thread_proc, daemon=True, args=(site_id,)).start()
 
         # Listen for raw audio on UDP too
         self.udp_chunk_size = udp_chunk_size
@@ -116,42 +121,42 @@ class WakeHermesMqtt(HermesClient):
 
     # -------------------------------------------------------------------------
 
-    def engine_thread_proc(self):
-        """Read predictions from precise-engine."""
-        assert (
-            self.engine_proc and self.engine_proc.stdout and self.detector
-        ), "Precise engine is not started"
+    # def engine_thread_proc(self):
+    #     """Read predictions from precise-engine."""
+    #     assert (
+    #         self.engine_procs and self.engine_proc.stdout and self.detector
+    #     ), "Precise engine is not started"
 
-        for line in self.engine_proc.stdout:
-            line = line.decode().strip()
-            if line:
-                if self.log_predictions:
-                    _LOGGER.debug("Prediction: %s", line)
+    #     for line in self.engine_proc.stdout:
+    #         line = line.decode().strip()
+    #         if line:
+    #             if self.log_predictions:
+    #                 _LOGGER.debug("Prediction: %s", line)
 
-                try:
-                    if self.detector.update(float(line)):
-                        asyncio.run_coroutine_threadsafe(
-                            self.publish_all(self.handle_detection()), self.loop
-                        )
-                except ValueError:
-                    _LOGGER.exception("engine_proc")
+    #             try:
+    #                 if self.detector.update(float(line)):
+    #                     asyncio.run_coroutine_threadsafe(
+    #                         self.publish_all(self.handle_detection()), self.loop
+    #                     )
+    #             except ValueError:
+    #                 _LOGGER.exception("engine_proc")
 
-    def load_engine(self, block=True):
+    def load_engine(self, site_id, block=True):
         """Load Precise engine and model.
 
         if block is True, wait until an empty chunk is predicted before
         returning.
         """
 
-        engine_cmd = [str(self.engine_path), str(self.model_path), str(self.chunk_size)]
+        engine_cmd = [str(self.engine_path), str(self.model_path), str(self.chunk_sizes[site_id])]
 
         _LOGGER.debug(engine_cmd)
-        self.engine_proc = subprocess.Popen(
+        self.engine_procs[site_id] = subprocess.Popen(
             engine_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
         )
 
-        self.detector = TriggerDetector(
-            self.chunk_size,
+        self.detectors[site_id] = TriggerDetector(
+            self.chunk_sizes[site_id],
             sensitivity=self.sensitivity,
             trigger_level=self.trigger_level,
         )
@@ -166,24 +171,24 @@ class WakeHermesMqtt(HermesClient):
         if block:
             # Send empty chunk and wait for a prediction
             _LOGGER.debug("Waiting for Precise to start...")
-            empty_chunk = b"\0" * self.chunk_size
-            self.engine_proc.stdin.write(empty_chunk)
-            self.engine_proc.stdin.flush()
-            self.engine_proc.stdout.readline()
+            empty_chunk = b"\0" * self.chunk_sizes[site_id]
+            self.engine_procs[site_id].stdin.write(empty_chunk)
+            self.engine_procs[site_id].stdin.flush()
+            self.engine_procs[site_id].stdout.readline()
 
-    def stop_runner(self):
+    def stop_runner(self, site_id):
         """Stop Precise runner."""
-        if self.engine_proc:
-            self.engine_proc.terminate()
-            self.engine_proc.wait()
-            self.engine_proc = None
+        if self.engine_procs[site_id]:
+            self.engine_procs[site_id].terminate()
+            self.engine_procs[site_id].wait()
+            self.engine_procs[site_id] = None
 
-        if self.detection_thread:
-            self.wav_queue.put((None, None))
-            self.detection_thread.join()
-            self.detection_thread = None
+        if self.detection_threads[site_id]:
+            self.wav_queues[site_id].put((None, None))
+            self.detection_threads[site_id].join()
+            self.detection_threads[site_id] = None
 
-        self.detector = None
+        self.detectors[site_id] = None
 
     # -------------------------------------------------------------------------
 
@@ -191,7 +196,7 @@ class WakeHermesMqtt(HermesClient):
         self, wav_bytes: bytes, site_id: str = "default"
     ) -> None:
         """Process a single audio frame"""
-        self.wav_queue.put((wav_bytes, site_id))
+        self.wav_queues[site_id].put((wav_bytes, site_id))
 
     async def handle_detection(
         self,
@@ -266,11 +271,11 @@ class WakeHermesMqtt(HermesClient):
                 error=str(e), context=str(get_hotwords), site_id=get_hotwords.site_id
             )
 
-    def detection_thread_proc(self):
+    def detection_thread_proc(self, site_id):
         """Handle WAV audio chunks."""
         try:
             while True:
-                wav_bytes, site_id = self.wav_queue.get()
+                wav_bytes, site_id = self.wav_queues[site_id].get()
                 if wav_bytes is None:
                     # Shutdown signal
                     break
@@ -278,37 +283,37 @@ class WakeHermesMqtt(HermesClient):
                 self.last_audio_site_id = site_id
 
                 # Handle audio frames
-                if self.first_audio:
-                    _LOGGER.debug("Receiving audio")
+                if self.first_audios[site_id]:
+                    _LOGGER.debug("Receiving audio %s", site_id)
                     self.first_audio = False
 
-                if not self.engine_proc:
-                    self.load_engine()
+                if not self.engine_procs[site_id]:
+                    self.load_engine(site_id)
 
                 assert (
-                    self.engine_proc and self.engine_proc.stdin
+                    self.engine_procs[site_id] and self.engine_procs[site_id].stdin
                 ), "Precise engine not loaded"
 
                 # Extract/convert audio data
                 audio_data = self.maybe_convert_wav(wav_bytes)
 
                 # Add to persistent buffer
-                self.audio_buffer += audio_data
+                self.audio_buffers[site_id] += audio_data
 
                 # Process in chunks.
                 # Any remaining audio data will be kept in buffer.
-                while len(self.audio_buffer) >= self.chunk_size:
-                    chunk = self.audio_buffer[: self.chunk_size]
-                    self.audio_buffer = self.audio_buffer[self.chunk_size :]
+                while len(self.audio_buffers[site_id]) >= self.chunk_sizes[site_id]:
+                    chunk = self.audio_buffers[site_id][: self.chunk_sizes[site_id]]
+                    self.audio_buffers[site_id] = self.audio_buffers[site_id][self.chunk_sizes[site_id] :]
 
                     if chunk:
                         # Send to precise-engine
                         # NOTE: The flush() is critical to this working.
-                        self.engine_proc.stdin.write(chunk)
-                        self.engine_proc.stdin.flush()
+                        self.engine_procs[site_id].stdin.write(chunk)
+                        self.engine_procs[site_id].stdin.flush()
 
                         # Get prediction
-                        line = self.engine_proc.stdout.readline()
+                        line = self.engine_procs[site_id].stdout.readline()
                         line = line.decode().strip()
 
                         if line:
@@ -316,7 +321,7 @@ class WakeHermesMqtt(HermesClient):
                                 _LOGGER.debug("Prediction: %s", line)
 
                             try:
-                                if self.detector.update(float(line)):
+                                if self.detectors[site_id].update(float(line)):
                                     asyncio.run_coroutine_threadsafe(
                                         self.publish_all(self.handle_detection()),
                                         self.loop,
@@ -341,7 +346,7 @@ class WakeHermesMqtt(HermesClient):
                 )
 
                 if self.enabled:
-                    self.wav_queue.put((wav_bytes, site_id))
+                    self.wav_queues[site_id].put((wav_bytes, site_id))
         except Exception:
             _LOGGER.exception("udp_thread_proc")
 
@@ -367,7 +372,7 @@ class WakeHermesMqtt(HermesClient):
                 _LOGGER.debug("Still disabled: %s", self.disabled_reasons)
             else:
                 self.enabled = True
-                self.first_audio = True
+                self.first_audios[site_id] = True
                 _LOGGER.debug("Enabled")
         elif isinstance(message, HotwordToggleOff):
             self.enabled = False
