@@ -285,7 +285,7 @@ class WakeHermesMqtt(HermesClient):
                 # Handle audio frames
                 if self.first_audios[site_id]:
                     _LOGGER.debug("Receiving audio %s", site_id)
-                    self.first_audio = False
+                    self.first_audios[site_id] = False
 
                 if not self.engine_procs[site_id]:
                     self.load_engine(site_id)
