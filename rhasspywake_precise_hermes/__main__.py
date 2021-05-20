@@ -125,9 +125,6 @@ def main():
         lang=args.lang,
     )
 
-    for site_id in args.site_id:
-        hermes.load_engine(site_id)
-
     _LOGGER.debug("Connecting to %s:%s", args.host, args.port)
     hermes_cli.connect(client, args)
     client.loop_start()
@@ -141,8 +138,7 @@ def main():
         _LOGGER.debug("Shutting down")
         client.loop_stop()
         if hermes:
-            for site_id in args.site_id:
-                hermes.stop_runner(site_id)
+            hermes.stop_runners()
 
 
 # -----------------------------------------------------------------------------
