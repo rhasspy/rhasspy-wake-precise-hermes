@@ -6,7 +6,7 @@ import socket
 import subprocess
 import threading
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from rhasspyhermes.audioserver import AudioFrame
@@ -39,9 +39,13 @@ class SiteInfo:
     detection_thread: typing.Optional[threading.Thread] = None
     audio_buffer: bytes = bytes()
     first_audio: bool = True
-    wav_queue: "queue.Queue[bytes]" = queue.Queue()
     engine_proc: typing.Optional[subprocess.Popen] = None
     detector: typing.Optional[TriggerDetector] = None
+
+    # Queue of (bytes, is_raw)
+    wav_queue: "queue.Queue[typing.Tuple[bytes, bool]]" = field(
+        default_factory=queue.Queue
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -67,6 +71,7 @@ class WakeHermesMqtt(HermesClient):
         chunk_size: int = 2048,
         udp_audio: typing.Optional[typing.List[typing.Tuple[str, int, str]]] = None,
         udp_chunk_size: int = 2048,
+        udp_raw_audio: bool = False,
         log_predictions: bool = False,
         lang: typing.Optional[str] = None,
     ):
@@ -120,6 +125,10 @@ class WakeHermesMqtt(HermesClient):
 
         # Listen for raw audio on UDP too
         self.udp_chunk_size = udp_chunk_size
+
+        # If True, UDP audio is raw 16Khz, 16-bit mono PCM chunks.
+        # If False, UDP audio is WAV chunks.
+        self.udp_raw_audio = udp_raw_audio
 
         if udp_audio:
             for udp_host, udp_port, udp_site_id in udp_audio:
@@ -185,7 +194,7 @@ class WakeHermesMqtt(HermesClient):
                 site_info.engine_proc = None
 
             if site_info.detection_thread is not None:
-                site_info.wav_queue.put(None)
+                site_info.wav_queue.put((None, None))
                 site_info.detection_thread.join()
                 site_info.detection_thread = None
 
@@ -210,7 +219,7 @@ class WakeHermesMqtt(HermesClient):
             site_info.detection_thread.start()
             self.site_info[site_id] = site_info
 
-        site_info.wav_queue.put(wav_bytes)
+        site_info.wav_queue.put((wav_bytes, False))
 
     async def handle_detection(
         self, site_info: SiteInfo
@@ -287,14 +296,14 @@ class WakeHermesMqtt(HermesClient):
         """Handle WAV audio chunks for one site id."""
         try:
             while True:
-                wav_bytes = site_info.wav_queue.get()
+                wav_bytes, is_raw = site_info.wav_queue.get()
                 if wav_bytes is None:
                     # Shutdown signal
                     break
 
                 # Handle audio frames
                 if site_info.first_audio:
-                    _LOGGER.debug("Receiving audio %s", site_info.site_id)
+                    _LOGGER.debug("%s: receiving audio", site_info.site_id)
                     site_info.first_audio = False
 
                 if site_info.engine_proc is None:
@@ -308,7 +317,13 @@ class WakeHermesMqtt(HermesClient):
                 ), "Precise engine/detector not loaded"
 
                 # Extract/convert audio data
-                audio_data = self.maybe_convert_wav(wav_bytes)
+
+                if is_raw:
+                    # Raw audio chunks
+                    audio_data = wav_bytes
+                else:
+                    # WAV chunks
+                    audio_data = self.maybe_convert_wav(wav_bytes)
 
                 # Add to persistent buffer
                 site_info.audio_buffer += audio_data
@@ -356,15 +371,22 @@ class WakeHermesMqtt(HermesClient):
             site_info = self.site_info[site_id]
             udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             udp_socket.bind((host, port))
-            _LOGGER.debug("Listening for audio on UDP %s:%s", host, port)
+            _LOGGER.debug(
+                "Listening for audio on UDP %s:%s (raw=%s)",
+                host,
+                port,
+                self.udp_raw_audio,
+            )
+
+            chunk_size = self.udp_chunk_size
+            if not self.udp_raw_audio:
+                chunk_size += WAV_HEADER_BYTES
 
             while True:
-                wav_bytes, _ = udp_socket.recvfrom(
-                    self.udp_chunk_size + WAV_HEADER_BYTES
-                )
+                wav_bytes, _ = udp_socket.recvfrom(chunk_size)
 
                 if self.enabled:
-                    site_info.wav_queue.put(wav_bytes)
+                    site_info.wav_queue.put((wav_bytes, self.udp_raw_audio))
         except Exception:
             _LOGGER.exception("udp_thread_proc")
 

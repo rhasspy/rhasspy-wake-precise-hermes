@@ -58,6 +58,11 @@ def main():
         action="append",
         help="Host/port/siteId for UDP audio input",
     )
+    parser.add_argument(
+        "--udp-raw-audio",
+        action="store_true",
+        help="UDP audio is raw 16Khz 16-bit mono PCM instead of WAV chunks",
+    )
     parser.add_argument("--lang", help="Set lang in hotword detected message")
 
     hermes_cli.add_hermes_args(parser)
@@ -121,6 +126,7 @@ def main():
         model_dirs=args.model_dir,
         log_predictions=args.log_predictions,
         udp_audio=udp_audio,
+        udp_raw_audio=args.udp_raw_audio,
         site_ids=args.site_id,
         lang=args.lang,
     )
