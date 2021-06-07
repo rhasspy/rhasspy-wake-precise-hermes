@@ -60,8 +60,13 @@ def main():
     )
     parser.add_argument(
         "--udp-raw-audio",
-        action="store_true",
-        help="UDP audio is raw 16Khz 16-bit mono PCM instead of WAV chunks",
+        action="append",
+        help="Site id(s) where UDP audio is raw 16Khz 16-bit mono PCM instead of WAV chunks",
+    )
+    parser.add_argument(
+        "--udp-forward-mqtt",
+        action="append",
+        help="Site id(s) to forward audio to MQTT after detection",
     )
     parser.add_argument("--lang", help="Set lang in hotword detected message")
 
@@ -127,6 +132,7 @@ def main():
         log_predictions=args.log_predictions,
         udp_audio=udp_audio,
         udp_raw_audio=args.udp_raw_audio,
+        udp_forward_mqtt=args.udp_forward_mqtt,
         site_ids=args.site_id,
         lang=args.lang,
     )

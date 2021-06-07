@@ -1,11 +1,13 @@
 """Hermes MQTT server for Rhasspy wakeword with Mycroft Precise"""
 import asyncio
+import io
 import logging
 import queue
 import socket
 import subprocess
 import threading
 import typing
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -71,7 +73,8 @@ class WakeHermesMqtt(HermesClient):
         chunk_size: int = 2048,
         udp_audio: typing.Optional[typing.List[typing.Tuple[str, int, str]]] = None,
         udp_chunk_size: int = 2048,
-        udp_raw_audio: bool = False,
+        udp_raw_audio: typing.Optional[typing.Iterable[str]] = None,
+        udp_forward_mqtt: typing.Optional[typing.Iterable[str]] = None,
         log_predictions: bool = False,
         lang: typing.Optional[str] = None,
     ):
@@ -126,9 +129,12 @@ class WakeHermesMqtt(HermesClient):
         # Listen for raw audio on UDP too
         self.udp_chunk_size = udp_chunk_size
 
-        # If True, UDP audio is raw 16Khz, 16-bit mono PCM chunks.
-        # If False, UDP audio is WAV chunks.
-        self.udp_raw_audio = udp_raw_audio
+        # Site ids where UDP audio is raw 16Khz, 16-bit mono PCM chunks instead
+        # of WAV chunks.
+        self.udp_raw_audio = set(udp_raw_audio or [])
+
+        # Site ids where UDP audio should be forward to MQTT after detection.
+        self.udp_forward_mqtt = set(udp_forward_mqtt or [])
 
         if udp_audio:
             for udp_host, udp_port, udp_site_id in udp_audio:
@@ -369,24 +375,49 @@ class WakeHermesMqtt(HermesClient):
         """Handle WAV chunks from UDP socket."""
         try:
             site_info = self.site_info[site_id]
+            is_raw_audio = site_id in self.udp_raw_audio
+            forward_to_mqtt = site_id in self.udp_forward_mqtt
+
             udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             udp_socket.bind((host, port))
             _LOGGER.debug(
-                "Listening for audio on UDP %s:%s (raw=%s)",
+                "Listening for audio on UDP %s:%s (siteId=%s, raw=%s)",
                 host,
                 port,
-                self.udp_raw_audio,
+                site_id,
+                is_raw_audio,
             )
 
             chunk_size = self.udp_chunk_size
-            if not self.udp_raw_audio:
+            if is_raw_audio:
                 chunk_size += WAV_HEADER_BYTES
 
             while True:
                 wav_bytes, _ = udp_socket.recvfrom(chunk_size)
 
                 if self.enabled:
-                    site_info.wav_queue.put((wav_bytes, self.udp_raw_audio))
+                    site_info.wav_queue.put((wav_bytes, is_raw_audio))
+                elif forward_to_mqtt:
+                    # When the wake word service is disabled, ASR should be active
+                    if is_raw_audio:
+                        # Re-package as WAV chunk and publish to MQTT
+                        with io.BytesIO() as wav_buffer:
+                            wav_file: wave.Wave_write = wave.open(wav_buffer, "wb")
+                            with wav_file:
+                                wav_file.setframerate(self.sample_rate)
+                                wav_file.setsampwidth(self.sample_width)
+                                wav_file.setnchannels(self.channels)
+                                wav_file.writeframes(wav_bytes)
+
+                            publish_wav_bytes = wav_buffer.getvalue()
+                    else:
+                        # Use WAV chunk as-is
+                        publish_wav_bytes = wav_bytes
+
+                    self.publish(
+                        AudioFrame(wav_bytes=publish_wav_bytes),
+                        site_id=site_info.site_id,
+                    )
         except Exception:
             _LOGGER.exception("udp_thread_proc")
 
